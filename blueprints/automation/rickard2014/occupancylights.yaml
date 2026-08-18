@@ -1,0 +1,113 @@
+blueprint:
+  source_url: https://raw.githubusercontent.com/rickard2014/hass-blueprints/main/blueprints/automation/rickard2014/occupancylights.yaml
+  name: Motion-Activated Devices with Time and State Conditions
+  description: >
+    Ativa luzes ou switches por detecção de movimento, com condição de horário
+    (entre o pôr do sol e o nascer do sol) e verificação de desligamento recente
+    por inatividade.
+
+    CORRIGIDA 2026-08-18. A versão anterior referenciava a variável `inputs`,
+    que não existe no Home Assistant, e falhava com
+    "UndefinedError: 'inputs' is undefined" em toda execução — confirmado no log
+    da santorini desde 2025-10-30. Correções aplicadas:
+      1. inputs passam por `variables:` (padrão suportado) em vez de `inputs.x`;
+      2. `last_triggered` pode ser None em automação nunca disparada — agora tem guarda;
+      3. a janela era 300s fixos ignorando o input `device_idle_time` — agora usa o input;
+      4. `expand()` não funciona sobre um seletor `target:` (é dict, não lista) —
+         agora expande entity_id/device_id/area_id corretamente;
+      5. `condition:` dentro de `repeat` abortava o laço inteiro no primeiro item
+         reprovado — trocado por `if/then`, que apenas pula o item.
+    Schema de inputs mantido idêntico, então automações existentes continuam válidas.
+  domain: automation
+  input:
+    motion_sensor:
+      name: Motion Sensor
+      description: Motion sensor that triggers the automation.
+      selector:
+        entity:
+          domain: binary_sensor
+    devices:
+      name: Devices
+      description: List of lights or switches to control.
+      selector:
+        target:
+          entity:
+            domain:
+              - light
+              - switch
+    idle_shutdown_automation:
+      name: Idle Shutdown Automation
+      description: Automation that triggers device idle shutdown.
+      selector:
+        entity:
+          domain: automation
+    device_idle_time:
+      name: Device Idle Time (minutes)
+      description: Time window in minutes to check if devices were recently turned off.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: minutes
+
+trigger:
+  - platform: state
+    entity_id: !input motion_sensor
+    to: "on"
+
+variables:
+  idle_automation: !input idle_shutdown_automation
+  devices_target: !input devices
+  device_idle_minutes: !input device_idle_time
+  device_entities: >
+    {% set t = devices_target %}
+    {% set e = t.entity_id | default([], true) %}
+    {% set e = [e] if e is string else e %}
+    {% set d = t.device_id | default([], true) %}
+    {% set d = [d] if d is string else d %}
+    {% set a = t.area_id | default([], true) %}
+    {% set a = [a] if a is string else a %}
+    {{ (e
+        + (d | map('device_entities') | sum(start=[]))
+        + (a | map('area_entities') | sum(start=[]))) | unique | list }}
+  idle_recent: >
+    {% set lt = state_attr(idle_automation, 'last_triggered') %}
+    {{ lt is not none
+       and (now() - lt).total_seconds() < (device_idle_minutes | float(5)) * 60 }}
+
+condition:
+  - condition: or
+    conditions:
+      - condition: sun
+        after: sunset
+        before: sunrise
+      - condition: template
+        value_template: "{{ idle_recent }}"
+
+action:
+  - choose:
+      - conditions:
+          - condition: sun
+            after: sunset
+            before: sunrise
+        sequence:
+          - service: homeassistant.turn_on
+            target: !input devices
+    default:
+      - repeat:
+          for_each: "{{ device_entities }}"
+          sequence:
+            - if:
+                - condition: template
+                  value_template: >
+                    {% set s = states[repeat.item] %}
+                    {{ s is not none
+                       and (now() - s.last_changed).total_seconds() / 60
+                           < (device_idle_minutes | float(5)) }}
+              then:
+                - service: homeassistant.turn_on
+                  target:
+                    entity_id: "{{ repeat.item }}"
+
+mode: single

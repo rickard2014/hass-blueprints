@@ -1,0 +1,42 @@
+blueprint:
+  source_url: https://raw.githubusercontent.com/rickard2014/hass-blueprints/main/blueprints/automation/rickard2014/idlelights.yaml
+  name: Timed Lights Shutdown
+  description: >
+    Turns off selected lights or switches after they have been on for a specified duration.
+  domain: automation
+
+  input:
+    device_list:
+      name: Devices
+      description: List of lights or switches to turn off after being on for the specified time.
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - light
+            - switch
+    on_time:
+      name: On Time (minutes)
+      description: Time duration before turning off the devices after they are turned on.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: minutes
+
+trigger:
+  - platform: state
+    entity_id: !input device_list
+    to: "on"
+    for:
+      minutes: !input on_time
+
+condition: []
+
+action:
+  - service: homeassistant.turn_off
+    target:
+      entity_id: !input device_list
+
+mode: single

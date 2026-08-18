@@ -1,0 +1,36 @@
+blueprint:
+  source_url: https://raw.githubusercontent.com/rickard2014/hass-blueprints/main/blueprints/automation/rickard2014/SyncNStates.yaml
+  name: Synchronize Multiple Switches (or Lights)
+  description: Bind multiple switch or light entities together to act in unison (selected entities must all support the same state values)
+  domain: automation
+  input:
+    entities:
+      name: Entities
+      description: Select the switches or lights to synchronize
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - switch
+            - light
+
+trigger:
+  - platform: state
+    entity_id: !input entities
+
+condition:
+  - condition: template
+    value_template: "{{ trigger.to_state.state in ['on', 'off'] }}"
+
+variables:
+  entities_list: !input entities  # Pass the entities list to a variable
+
+action:
+  - service: "homeassistant.turn_{{ trigger.to_state.state }}"
+    target:
+      entity_id: "{{ (entities_list | reject('eq', trigger.entity_id)) | list }}"  # Use the list filter
+  - delay:
+      seconds: 0.3
+
+mode: single
+max_exceeded: silent

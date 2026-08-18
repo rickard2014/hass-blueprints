@@ -1,0 +1,203 @@
+blueprint:
+  source_url: https://raw.githubusercontent.com/rickard2014/hass-blueprints/main/blueprints/automation/rickard2014/switch_temperature_mode_controller.yaml
+  name: RGCC - Switch Temperature Mode Controller
+  description: >
+    Controla um switch com base em temperatura, com modo Auto, On Demand e Off.
+    No modo Auto, usa temperatura Home ou Away.
+    No modo On Demand, usa a mesma temperatura Home e depois volta para Auto.
+  domain: automation
+
+  input:
+    temperature_sensor:
+      name: Sensor de temperatura
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    controlled_switch:
+      name: Switch controlado
+      selector:
+        entity:
+          domain: switch
+
+    mode_helper:
+      name: Helper de modo
+      description: input_select com as opções auto, on_demand e off.
+      selector:
+        entity:
+          domain: input_select
+
+    home_away_helper:
+      name: Helper Home/Away
+      description: input_boolean ligado = Home, desligado = Away.
+      selector:
+        entity:
+          domain: input_boolean
+
+    home_target:
+      name: Temperatura alvo Home / On Demand
+      selector:
+        entity:
+          domain: input_number
+
+    away_target:
+      name: Temperatura alvo Away
+      selector:
+        entity:
+          domain: input_number
+
+    hysteresis:
+      name: Histerese
+      default: 0.5
+      selector:
+        number:
+          min: 0.1
+          max: 3
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+
+    auto_only_during_day:
+      name: Auto somente durante o dia
+      default: true
+      selector:
+        boolean: {}
+
+    on_demand_returns_to_auto:
+      name: On Demand volta para Auto ao atingir alvo
+      default: true
+      selector:
+        boolean: {}
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input temperature_sensor
+
+  - platform: state
+    entity_id: !input mode_helper
+
+  - platform: state
+    entity_id: !input home_away_helper
+
+  - platform: state
+    entity_id: !input home_target
+
+  - platform: state
+    entity_id: !input away_target
+
+  - platform: sun
+    event: sunrise
+
+  - platform: sun
+    event: sunset
+
+  - platform: time_pattern
+    minutes: "/5"
+
+variables:
+  temp_sensor: !input temperature_sensor
+  mode_entity: !input mode_helper
+  home_away_entity: !input home_away_helper
+  home_target_entity: !input home_target
+  away_target_entity: !input away_target
+  hysteresis_value: !input hysteresis
+  auto_day_only: !input auto_only_during_day
+  on_demand_auto_return: !input on_demand_returns_to_auto
+
+  current_temp: "{{ states(temp_sensor) | float(0) }}"
+  current_mode: "{{ states(mode_entity) }}"
+  home_temp: "{{ states(home_target_entity) | float(28) }}"
+  away_temp: "{{ states(away_target_entity) | float(24) }}"
+  auto_target: >
+    {% if is_state(home_away_entity, 'on') %}
+      {{ states(home_target_entity) | float(28) }}
+    {% else %}
+      {{ states(away_target_entity) | float(24) }}
+    {% endif %}
+  sun_is_up: "{{ is_state('sun.sun', 'above_horizon') }}"
+
+condition:
+  - condition: template
+    value_template: >
+      {{ states(temp_sensor) not in ['unknown', 'unavailable', 'none'] }}
+
+action:
+  - choose:
+      # OFF: força desligado sempre
+      - conditions:
+          - condition: template
+            value_template: "{{ current_mode == 'off' }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input controlled_switch
+
+      # ON DEMAND: usa temperatura Home e ignora horário/Home-Away
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ current_mode == 'on_demand'
+                 and current_temp < home_temp }}
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input controlled_switch
+
+      # ON DEMAND: atingiu alvo Home, desliga e volta para Auto
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ current_mode == 'on_demand'
+                 and current_temp >= home_temp }}
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input controlled_switch
+
+          - if:
+              - condition: template
+                value_template: "{{ on_demand_auto_return }}"
+            then:
+              - service: input_select.select_option
+                target:
+                  entity_id: !input mode_helper
+                data:
+                  option: auto
+
+      # AUTO: se for somente dia e estiver de noite, desliga
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ current_mode == 'auto'
+                 and auto_day_only
+                 and not sun_is_up }}
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input controlled_switch
+
+      # AUTO: liga abaixo do alvo menos histerese
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ current_mode == 'auto'
+                 and (not auto_day_only or sun_is_up)
+                 and current_temp < ((auto_target | float) - (hysteresis_value | float)) }}
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input controlled_switch
+
+      # AUTO: desliga ao atingir o alvo
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ current_mode == 'auto'
+                 and current_temp >= (auto_target | float) }}
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input controlled_switch

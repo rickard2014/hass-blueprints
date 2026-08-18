@@ -1,0 +1,47 @@
+blueprint:
+  source_url: https://raw.githubusercontent.com/rickard2014/hass-blueprints/main/blueprints/automation/rickard2014/idleshutdown.yaml
+  name: Motion Activated Lights - Idle Shutdown Automation
+  description: >
+    Turns off selected devices after a motion sensor has been inactive for a specified duration.
+  domain: automation
+  input:
+    motion_sensor:
+      name: Motion Sensor
+      description: The motion sensor to monitor for inactivity.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: occupancy
+    devices:
+      name: Devices
+      description: List of lights or switches to turn off when idle.
+      selector:
+        target:
+          entity:
+            domain:
+              - light
+              - switch
+    idle_time:
+      name: Inactivity Time (minutes)
+      description: Time of inactivity before turning off the devices.
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: minutes
+
+trigger:
+  - platform: state
+    entity_id: !input motion_sensor
+    to: "off"
+    for:
+      minutes: !input idle_time
+
+condition: []
+
+action:
+  - service: homeassistant.turn_off
+    target: !input devices
+
+mode: single
