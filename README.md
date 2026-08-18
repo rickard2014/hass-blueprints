@@ -24,7 +24,10 @@ cole a URL do arquivo `.yaml` deste repositório.
 
 ### `SyncNStates` — sincronizar N entidades
 
-Mantém várias luzes ou tomadas no mesmo estado. É a que substitui as três
+Mantém várias luzes ou tomadas no mesmo estado. O gatilho é restrito a
+`to: ["on", "off"]`, então nem chega a executar quando a entidade cai para
+`unavailable`/`unknown` — a condição de estado continua ali como segunda linha
+de defesa. É a que substitui as três
 variantes antigas (`SyncStatesTwo`/`Three`/`Four`), e a única que **exclui do
 alvo a entidade que disparou**, o que corta o laço de re-disparo na origem em
 vez de mascará-lo com atrasos. Tem guarda para `unavailable`/`unknown`, para não
@@ -60,9 +63,9 @@ por N minutos. `idlelights` desliga após ficarem ligados por N minutos.
 
 ## Terceiros
 
-`edwardtfn/` e `adchevrier/` são de outros autores, mantidas aqui só para
-manter minhas instâncias na mesma versão. O `source_url` de cada uma aponta para
-a origem — instale pela origem, não por aqui.
+`edwardtfn/` é de outro autor, mantida aqui só para manter minhas instâncias na
+mesma versão. O `source_url` dela aponta para a origem — instale pela origem,
+não por aqui.
 
 ## Desenvolvimento
 

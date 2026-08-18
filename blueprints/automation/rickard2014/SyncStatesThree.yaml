@@ -32,6 +32,7 @@ trigger:
       - !input entity_2
       - !input entity_3
     platform: state
+    to: ["on", "off"]
 
 action:
   - condition: template

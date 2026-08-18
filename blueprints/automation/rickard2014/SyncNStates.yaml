@@ -17,6 +17,7 @@ blueprint:
 trigger:
   - platform: state
     entity_id: !input entities
+    to: ["on", "off"]
 
 condition:
   - condition: template
