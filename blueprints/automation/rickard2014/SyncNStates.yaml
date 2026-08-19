@@ -1,18 +1,126 @@
+# Synchronize Multiple Switches (or Lights) — "paralelo" (three-way emulado)
+#
+# Mantém N interruptores/luzes no mesmo estado. Substitui SyncStatesTwo/Three/
+# Four, que eram o mesmo problema escrito três vezes com 2, 3 e 4 inputs fixos.
+#
+# ---------------------------------------------------------------------------
+# POR QUE ESTA BLUEPRINT TEM GUARDAS — leia antes de simplificar
+# ---------------------------------------------------------------------------
+# Em 2026-08-19 uma instância em que uso estas blueprints entrou em laço de
+# verdade: um grupo de três entidades disparou dezenas de vezes em 33 s e a luz
+# piscou até alguém cortar a energia pela fiação, queimando um interruptor. A
+# versão em produção naquele dia comandava TODAS as entidades do grupo,
+# inclusive a que tinha disparado, e não checava se os estados de fato
+# divergiam: cada confirmação de estado realimentava a automação.
+#
+# O que decide se o laço morre sozinho ou se sustenta é o tipo do dispositivo
+# na malha Zigbee:
+#
+#   Router      (mains: TS0001/2/3/4)  confirma em milissegundos. Os estados
+#                                      convergem antes do ciclo seguinte e o
+#                                      laço morre sozinho — por isso um grupo
+#                                      só de Router nunca deu problema.
+#   End Device  (TS0601 sem neutro,    confirma segundos depois e FORA DE ORDEM.
+#                ZBMINI-L2)            O relato atrasado ("ainda estou off")
+#                                      chega DEPOIS do comando, e o HA registra
+#                                      isso como mudança de estado. É esse
+#                                      relato velho que realimenta o laço.
+#
+# No caso que gerou este conserto, 8 de 14 grupos misturavam Router com End
+# Device. Para conferir o tipo de um dispositivo: campo "type" no
+# database.db do Zigbee2MQTT, ou a coluna Type na interface dele.
+#
+# ---------------------------------------------------------------------------
+# AS QUATRO GUARDAS, em ordem de curto-circuito
+# ---------------------------------------------------------------------------
+# 1. alvo válido      o estado lido AO VIVO é on/off. Cobre o gatilho que caiu
+#                     para unavailable enquanto esperava na fila.
+# 2. não é recuperação quem volta de queda obedece ao grupo, não o comanda. Sem
+#                     isto, um reload restaura dezenas de entidades de uma vez e
+#                     todo paralelo dispara junto — foi o que houve às 19:20:48.
+# 3. grupo íntegro    nenhum membro unavailable/unknown. Dispositivo caído não
+#                     comanda nem é comandado.
+# 4. divergência      E É ESTA QUE FECHA O LAÇO. Quando os estados já batem não
+#                     há o que fazer, e o eco morre na condição, não na ação.
+#
+# ---------------------------------------------------------------------------
+# POR QUE O ALVO É LIDO AO VIVO, E NÃO DE trigger.to_state
+# ---------------------------------------------------------------------------
+# Com mode: queued um eco atrasado é desenfileirado DEPOIS, e nesse momento o
+# trigger.to_state dele já está velho. Medido num grupo de três entidades, com
+# as três em on, simulando um eco cujo trigger dizia "off":
+#
+#   lendo trigger.to_state  -> AGIRIA: turn_off nas outras duas  <- apaga à toa
+#   lendo states() ao vivo  -> NO-OP, o eco morre na condição
+#
+# Ler ao vivo é o que torna o mode: queued seguro.
+#
+# ---------------------------------------------------------------------------
+# POR QUE mode: queued, max: 2 E NÃO mode: single
+# ---------------------------------------------------------------------------
+# Com single, qualquer disparo dentro da janela de acomodação é DESCARTADO, e
+# isso quebra um caso real: ligar a luz sem querer e apertar de novo para
+# desligar em menos de settle_time — o segundo toque sumiria. Com queued o toque
+# é enfileirado e honrado logo em seguida, já com o estado lido ao vivo. Custa
+# latência, não correção. max: 2 porque a fila existe para absorver o toque
+# humano seguinte, não para acumular eco: do terceiro em diante, descarta calado.
+#
+# ---------------------------------------------------------------------------
+# POR QUE O PADRÃO DE settle_time É 0.3 s
+# ---------------------------------------------------------------------------
+# Escolhido por experiência de uso, não por medida de rede: 0,3 s é curto o
+# bastante para não ser percebido em "liguei sem querer, quero desligar já", e é
+# o valor que já rodava sem problema em duas instâncias. A partir de 0,5 s o
+# atraso começa a ficar perceptível nesse caso.
+#
+# O atraso fica DEPOIS da chamada de serviço: não atrasa a luz, só limita a taxa
+# de reentrada. E ele NÃO é a proteção contra laço — a proteção é a guarda de
+# divergência. Se algum grupo com End Device ainda oscilar, suba o settle_time
+# SÓ naquele grupo pela UI; não há motivo para mexer no padrão.
 blueprint:
   source_url: https://raw.githubusercontent.com/rickard2014/hass-blueprints/main/blueprints/automation/rickard2014/SyncNStates.yaml
   name: Synchronize Multiple Switches (or Lights)
-  description: Bind multiple switch or light entities together to act in unison (selected entities must all support the same state values)
+  description: >-
+    Mantém N interruptores ou luzes no mesmo estado (paralelo / three-way
+    emulado). Todas as entidades precisam aceitar os mesmos estados.
   domain: automation
   input:
     entities:
       name: Entities
-      description: Select the switches or lights to synchronize
+      description: Os interruptores ou luzes a sincronizar
       selector:
         entity:
           multiple: true
           domain:
             - switch
             - light
+    settle_time:
+      name: Tempo de acomodação (s)
+      description: >-
+        Janela, depois de agir, em que a automação não reentra. NÃO é a proteção
+        contra laço — essa é a guarda de divergência. 0.3 s serve para grupo só
+        de Router. Se um grupo com End Device Zigbee (TS0601 sem neutro,
+        ZBMINI-L2) ainda oscilar, suba só nele, para 2–3 s.
+      default: 0.3
+      selector:
+        number:
+          min: 0.1
+          max: 15
+          step: 0.1
+          unit_of_measurement: s
+          mode: box
+
+mode: queued
+max: 2
+max_exceeded: silent
+
+variables:
+  members: !input entities
+  # Lido ao vivo, no início desta execução — ver o cabeçalho.
+  alvo: "{{ states(trigger.entity_id) }}"
+  divergentes: >-
+    {{ members | reject('eq', trigger.entity_id)
+       | reject('is_state', alvo) | list }}
 
 trigger:
   - platform: state
@@ -20,18 +128,22 @@ trigger:
     to: ["on", "off"]
 
 condition:
-  - condition: template
-    value_template: "{{ trigger.to_state.state in ['on', 'off'] }}"
-
-variables:
-  entities_list: !input entities  # Pass the entities list to a variable
+  - condition: template          # 1. alvo válido
+    value_template: "{{ alvo in ['on', 'off'] }}"
+  - condition: template          # 2. não é recuperação de queda
+    value_template: >-
+      {{ trigger.from_state is not none
+         and trigger.from_state.state not in ['unavailable', 'unknown'] }}
+  - condition: template          # 3. grupo íntegro
+    value_template: >-
+      {{ members | select('is_state', 'unavailable') | list | count == 0
+         and members | select('is_state', 'unknown') | list | count == 0 }}
+  - condition: template          # 4. divergência — fecha o laço
+    value_template: "{{ divergentes | count > 0 }}"
 
 action:
-  - service: "homeassistant.turn_{{ trigger.to_state.state }}"
+  - service: "homeassistant.turn_{{ alvo }}"
     target:
-      entity_id: "{{ (entities_list | reject('eq', trigger.entity_id)) | list }}"  # Use the list filter
+      entity_id: "{{ divergentes }}"
   - delay:
-      seconds: 0.3
-
-mode: single
-max_exceeded: silent
+      seconds: !input settle_time

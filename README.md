@@ -9,9 +9,6 @@ oferecer atualização depois — é o que o `source_url` em cada arquivo permit
 | Blueprint | Nome no HA | Instalar |
 |---|---|---|
 | `SyncNStates.yaml` | Synchronize Multiple Switches (or Lights) | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2FSyncNStates.yaml) |
-| `SyncStatesFour.yaml` | Synchronize Switches and Lights | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2FSyncStatesFour.yaml) |
-| `SyncStatesThree.yaml` | Synchronize Three Switches (or Lights) | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2FSyncStatesThree.yaml) |
-| `SyncStatesTwo.yaml` | Synchronize Two Switches (or Lights) | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2FSyncStatesTwo.yaml) |
 | `idlelights.yaml` | Timed Lights Shutdown | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2Fidlelights.yaml) |
 | `idleshutdown.yaml` | Motion Activated Lights - Idle Shutdown Automation | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2Fidleshutdown.yaml) |
 | `occupancylights.yaml` | Motion-Activated Devices with Time and State Conditions | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2Foccupancylights.yaml) |
@@ -24,17 +21,37 @@ cole a URL do arquivo `.yaml` deste repositório.
 
 ### `SyncNStates` — sincronizar N entidades
 
-Mantém várias luzes ou tomadas no mesmo estado. O gatilho é restrito a
-`to: ["on", "off"]`, então nem chega a executar quando a entidade cai para
-`unavailable`/`unknown` — a condição de estado continua ali como segunda linha
-de defesa. É a que substitui as três
-variantes antigas (`SyncStatesTwo`/`Three`/`Four`), e a única que **exclui do
-alvo a entidade que disparou**, o que corta o laço de re-disparo na origem em
-vez de mascará-lo com atrasos. Tem guarda para `unavailable`/`unknown`, para não
-chamar `homeassistant.turn_unavailable`, e `max_exceeded: silent`.
+Mantém várias luzes ou tomadas no mesmo estado — o "paralelo", o three-way
+emulado. É a **única** blueprint de sincronismo daqui: `SyncStatesTwo`, `Three`
+e `Four` eram o mesmo problema escrito três vezes com 2, 3 e 4 inputs fixos, e
+foram removidas em 2026-08-19 depois que toda a frota migrou.
 
-Prefira esta. `SyncStatesTwo`, `Three` e `Four` seguem publicadas apenas porque
-automações antigas ainda as referenciam.
+Quatro guardas, nesta ordem, e o cabeçalho do arquivo explica cada uma:
+
+1. o estado-alvo, **lido ao vivo**, é `on`/`off`;
+2. quem volta de queda obedece ao grupo, não o comanda;
+3. nenhum membro `unavailable`/`unknown`;
+4. **divergência real** — é esta que fecha o laço: quando os estados já batem, o
+   eco morre na condição em vez de virar mais uma chamada de serviço.
+
+O alvo nunca inclui a entidade que disparou, e inclui apenas as que de fato
+discordam.
+
+> **Por que isso importa.** Em 2026-08-19 uma instância entrou em laço de
+> verdade: a luz piscou até alguém cortar a energia pela fiação, e um
+> interruptor queimou. O que decide se o laço morre sozinho é o tipo do
+> dispositivo na malha Zigbee — um **Router** confirma em milissegundos e os
+> estados convergem antes do ciclo seguinte; um **End Device** (TS0601 sem
+> neutro, ZBMINI-L2) confirma segundos depois e **fora de ordem**, e é esse
+> relato velho que realimenta. Antes de sincronizar, confira o `type` do
+> dispositivo no Zigbee2MQTT.
+
+`settle_time` (padrão 0.3 s) é uma janela de não-reentrada aplicada **depois** da
+chamada de serviço — não atrasa a luz, e **não é** a proteção contra laço. Se um
+grupo com End Device ainda oscilar, suba só nele, para 2–3 s.
+
+`mode: queued` com `max: 2`: um toque dentro da janela é enfileirado e honrado,
+não descartado — é o que preserva "liguei sem querer, quero desligar já".
 
 ### `switch_temperature_mode_controller` — termostato com modos
 
