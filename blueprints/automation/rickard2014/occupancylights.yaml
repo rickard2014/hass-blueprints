@@ -8,8 +8,8 @@ blueprint:
 
     CORRIGIDA 2026-08-18. A versão anterior referenciava a variável `inputs`,
     que não existe no Home Assistant, e falhava com
-    "UndefinedError: 'inputs' is undefined" em toda execução — confirmado no log
-    da santorini desde 2025-10-30. Correções aplicadas:
+    "UndefinedError: 'inputs' is undefined" em toda execução — confirmado em log
+    desde 2025-10-30. Correções aplicadas:
       1. inputs passam por `variables:` (padrão suportado) em vez de `inputs.x`;
       2. `last_triggered` pode ser None em automação nunca disparada — agora tem guarda;
       3. a janela era 300s fixos ignorando o input `device_idle_time` — agora usa o input;
