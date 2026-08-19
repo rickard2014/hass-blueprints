@@ -38,17 +38,28 @@ O alvo nunca inclui a entidade que disparou, e inclui apenas as que de fato
 discordam.
 
 > **Por que isso importa.** Em 2026-08-19 uma instância entrou em laço de
-> verdade: a luz piscou até alguém cortar a energia pela fiação, e um
-> interruptor queimou. O que decide se o laço morre sozinho é o tipo do
-> dispositivo na malha Zigbee — um **Router** confirma em milissegundos e os
-> estados convergem antes do ciclo seguinte; um **End Device** (TS0601 sem
-> neutro, ZBMINI-L2) confirma segundos depois e **fora de ordem**, e é esse
-> relato velho que realimenta. Antes de sincronizar, confira o `type` do
-> dispositivo no Zigbee2MQTT.
+> verdade: um grupo de três entidades acumulou 4671 mudanças de estado em
+> 45 min, a luz piscou, e alguém acabou cortando a energia pela fiação —
+> queimando um interruptor. A blueprint em produção comandava todas as entidades
+> do grupo, inclusive a que tinha disparado, e não checava divergência. Esse
+> desenho é um **amplificador**: qualquer discordância momentânea vira comando
+> no grupo inteiro, e cada confirmação reentra como gatilho novo.
+
+> **Correção de uma explicação errada.** Uma versão anterior deste README e do
+> cabeçalho do arquivo culpava a topologia Zigbee — dizia que End Device
+> (TS0601 sem neutro) confirma "segundos depois e fora de ordem" e que era isso
+> que sustentava o laço. Medido depois no histórico do incidente, com o grupo
+> parado 38 min e um toque físico iniciando: **+49 ms** o End Device, **+238 ms**
+> o Router do mesmo grupo — o End Device foi 5x mais rápido, e em ordem. Na
+> mesma janela, outros dois grupos que também misturavam End Device com Router
+> foram usados e sincronizaram normalmente. **O tipo do dispositivo não explica
+> o incidente; o desenho da blueprint explica.** O que disparou aquele grupo
+> específico segue indeterminado, e está registrado como tal.
 
 `settle_time` (padrão 0.3 s) é uma janela de não-reentrada aplicada **depois** da
-chamada de serviço — não atrasa a luz, e **não é** a proteção contra laço. Se um
-grupo com End Device ainda oscilar, suba só nele, para 2–3 s.
+chamada de serviço — não atrasa a luz, e **não é** a proteção contra laço. O
+padrão serve para qualquer grupo: está medido que o tipo Zigbee do dispositivo
+não muda o quadro. Só mexa com medição própria na mão.
 
 `mode: queued` com `max: 2`: um toque dentro da janela é enfileirado e honrado,
 não descartado — é o que preserva "liguei sem querer, quero desligar já".

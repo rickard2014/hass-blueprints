@@ -6,77 +6,101 @@
 # ---------------------------------------------------------------------------
 # POR QUE ESTA BLUEPRINT TEM GUARDAS — leia antes de simplificar
 # ---------------------------------------------------------------------------
-# Em 2026-08-19 uma instância em que uso estas blueprints entrou em laço de
-# verdade: um grupo de três entidades disparou dezenas de vezes em 33 s e a luz
-# piscou até alguém cortar a energia pela fiação, queimando um interruptor. A
-# versão em produção naquele dia comandava TODAS as entidades do grupo,
-# inclusive a que tinha disparado, e não checava se os estados de fato
-# divergiam: cada confirmação de estado realimentava a automação.
+# Em 2026-08-19 uma instância entrou em laço real: um grupo de três entidades
+# acumulou 4671 mudanças de estado em 45 min, a luz piscou, e alguém acabou
+# cortando a energia pela fiação — queimando um interruptor.
 #
-# O que decide se o laço morre sozinho ou se sustenta é o tipo do dispositivo
-# na malha Zigbee:
+# A versão em produção naquele dia comandava TODAS as entidades do grupo,
+# INCLUSIVE a que tinha disparado, tirava a direção do comando do último relato
+# recebido, e não checava se os estados de fato divergiam. Esse desenho é um
+# AMPLIFICADOR: qualquer discordância momentânea entre os membros vira comando
+# no grupo inteiro, e a confirmação de cada aparelho reentra como gatilho novo.
+# Isso basta para uma oscilação se sustentar, em qualquer grupo.
 #
-#   Router      (mains: TS0001/2/3/4)  confirma em milissegundos. Os estados
-#                                      convergem antes do ciclo seguinte e o
-#                                      laço morre sozinho — por isso um grupo
-#                                      só de Router nunca deu problema.
-#   End Device  (TS0601 sem neutro,    confirma segundos depois e FORA DE ORDEM.
-#                ZBMINI-L2)            O relato atrasado ("ainda estou off")
-#                                      chega DEPOIS do comando, e o HA registra
-#                                      isso como mudança de estado. É esse
-#                                      relato velho que realimenta o laço.
+# ---------------------------------------------------------------------------
+# CORREÇÃO DE UMA EXPLICAÇÃO ERRADA QUE ESTE ARQUIVO JÁ CARREGOU
+# ---------------------------------------------------------------------------
+# A versão anterior deste cabeçalho afirmava que o laço se sustentava porque
+# dispositivo Zigbee End Device (TS0601 sem neutro) confirma "segundos depois e
+# fora de ordem", enquanto Router confirma em milissegundos. Foi medido depois,
+# no histórico do próprio incidente, e é FALSO.
 #
-# No caso que gerou este conserto, 8 de 14 grupos misturavam Router com End
-# Device. Para conferir o tipo de um dispositivo: campo "type" no
-# database.db do Zigbee2MQTT, ou a coluna Type na interface dele.
+# Medida limpa de comando→confirmação, com o grupo parado 38 min antes e um
+# único toque físico iniciando:
+#
+#     +49 ms   End Device (TS0601 sem neutro)
+#     +238 ms  Router (TS0003)
+#
+# O End Device respondeu 5x MAIS RÁPIDO que o router do mesmo grupo, e em ordem.
+# Na mesma janela, dois outros grupos que também misturavam End Device com
+# Router foram usados e sincronizaram normalmente, sem oscilar.
+#
+# O tipo do dispositivo na malha Zigbee não explica o incidente; o desenho da
+# blueprint explica. O que disparou aquele grupo específico — uma reversão de
+# estado 437 ms depois do grupo já estar sincronizado, que a automação daquele
+# desenho não produz — segue INDETERMINADO, e fica registrado como tal em vez de
+# preenchido com hipótese. Também segue aberto por que um grupo de três entidades
+# oscilou e os de duas não, sendo os arquivos estruturalmente idênticos.
 #
 # ---------------------------------------------------------------------------
 # AS QUATRO GUARDAS, em ordem de curto-circuito
 # ---------------------------------------------------------------------------
-# 1. alvo válido      o estado lido AO VIVO é on/off. Cobre o gatilho que caiu
-#                     para unavailable enquanto esperava na fila.
+# 1. alvo válido      o estado do gatilho é on/off.
 # 2. não é recuperação quem volta de queda obedece ao grupo, não o comanda. Sem
 #                     isto, um reload restaura dezenas de entidades de uma vez e
-#                     todo paralelo dispara junto — foi o que houve às 19:20:48.
+#                     todo paralelo dispara junto.
 # 3. grupo íntegro    nenhum membro unavailable/unknown. Dispositivo caído não
 #                     comanda nem é comandado.
 # 4. divergência      E É ESTA QUE FECHA O LAÇO. Quando os estados já batem não
 #                     há o que fazer, e o eco morre na condição, não na ação.
 #
-# ---------------------------------------------------------------------------
-# POR QUE O ALVO É LIDO AO VIVO, E NÃO DE trigger.to_state
-# ---------------------------------------------------------------------------
-# Com mode: queued um eco atrasado é desenfileirado DEPOIS, e nesse momento o
-# trigger.to_state dele já está velho. Medido num grupo de três entidades, com
-# as três em on, simulando um eco cujo trigger dizia "off":
-#
-#   lendo trigger.to_state  -> AGIRIA: turn_off nas outras duas  <- apaga à toa
-#   lendo states() ao vivo  -> NO-OP, o eco morre na condição
-#
-# Ler ao vivo é o que torna o mode: queued seguro.
+# Somado a isso, o alvo NUNCA inclui a entidade que disparou, e inclui apenas as
+# que de fato discordam. É o que corta o amplificador na raiz.
 #
 # ---------------------------------------------------------------------------
-# POR QUE mode: queued, max: 2 E NÃO mode: single
+# mode: queued, max: 2 — E O QUE ISSO REALMENTE FAZ
 # ---------------------------------------------------------------------------
-# Com single, qualquer disparo dentro da janela de acomodação é DESCARTADO, e
-# isso quebra um caso real: ligar a luz sem querer e apertar de novo para
-# desligar em menos de settle_time — o segundo toque sumiria. Com queued o toque
-# é enfileirado e honrado logo em seguida, já com o estado lido ao vivo. Custa
-# latência, não correção. max: 2 porque a fila existe para absorver o toque
-# humano seguinte, não para acumular eco: do terceiro em diante, descarta calado.
+# Verificado em AutomationEntity.async_trigger: quando um gatilho dispara, o HA
+# renderiza `variables:` e avalia `condition:` IMEDIATAMENTE, e só então chama
+# action_script.async_run, que é onde mode/max são aplicados. Em mode: queued,
+# portanto, só a AÇÃO é enfileirada.
+#
+# Consequência: `alvo`, abaixo, é lido no disparo e não no desenfileiramento —
+# é equivalente a trigger.to_state.state. Uma versão anterior deste cabeçalho
+# afirmava que ler ao vivo "é o que torna o queued seguro". NÃO É. Quem fecha o
+# laço é a guarda de divergência.
+#
+# Isto NÃO quer dizer que a blueprint esteja quebrada. No disparo a máquina de
+# estados já contém os valores atuais, então a guarda de divergência identifica
+# corretamente quem discorda, e o alvo segue excluindo quem disparou. As duas
+# proteções que importam continuam de pé.
+#
+# O que falta: não existe checagem de frescor no DESENFILEIRAMENTO. Uma execução
+# que ficou na fila age com a informação do momento em que foi enfileirada —
+# limitada por settle_time, ou seja, no máximo ~0,3 s de defasagem, com max: 2.
+# É estreito, e não é o modo de falha do incidente.
+#
+# Para essa checagem existir, o cálculo de alvo e divergentes precisa migrar
+# para DENTRO de `action:`, num passo `variables:` seguido de condição —
+# templates de passos da ação são renderizados quando o passo executa. Melhoria
+# conhecida, deliberadamente não aplicada até aqui.
+#
+# Por que queued e não single: com single, qualquer disparo dentro da janela de
+# settle_time é DESCARTADO, e isso quebra um caso real — ligar a luz sem querer
+# e apertar de novo para desligar em menos de settle_time. Com queued o toque é
+# enfileirado e honrado. max: 2 porque a fila existe para absorver o toque humano
+# seguinte, não para acumular eco: do terceiro em diante, descarta calado.
 #
 # ---------------------------------------------------------------------------
-# POR QUE O PADRÃO DE settle_time É 0.3 s
+# settle_time, padrão 0.3 s
 # ---------------------------------------------------------------------------
-# Escolhido por experiência de uso, não por medida de rede: 0,3 s é curto o
-# bastante para não ser percebido em "liguei sem querer, quero desligar já", e é
-# o valor que já rodava sem problema em duas instâncias. A partir de 0,5 s o
-# atraso começa a ficar perceptível nesse caso.
+# Janela de não-reentrada aplicada DEPOIS da chamada de serviço: não atrasa a
+# luz, só limita a taxa de reentrada. NÃO é a proteção contra laço.
 #
-# O atraso fica DEPOIS da chamada de serviço: não atrasa a luz, só limita a taxa
-# de reentrada. E ele NÃO é a proteção contra laço — a proteção é a guarda de
-# divergência. Se algum grupo com End Device ainda oscilar, suba o settle_time
-# SÓ naquele grupo pela UI; não há motivo para mexer no padrão.
+# 0,3 s foi escolhido por experiência de uso: curto o bastante para não ser
+# percebido em "liguei sem querer, quero desligar já". A tentação de subir para
+# 2–3 s vinha da teoria Zigbee refutada acima — com a medição na mão, não há
+# razão para mexer.
 blueprint:
   source_url: https://raw.githubusercontent.com/rickard2014/hass-blueprints/main/blueprints/automation/rickard2014/SyncNStates.yaml
   name: Synchronize Multiple Switches (or Lights)
@@ -97,10 +121,11 @@ blueprint:
     settle_time:
       name: Tempo de acomodação (s)
       description: >-
-        Janela, depois de agir, em que a automação não reentra. NÃO é a proteção
-        contra laço — essa é a guarda de divergência. 0.3 s serve para grupo só
-        de Router. Se um grupo com End Device Zigbee (TS0601 sem neutro,
-        ZBMINI-L2) ainda oscilar, suba só nele, para 2–3 s.
+        Janela, depois de agir, em que a automação não reentra. NÃO é a
+        proteção contra laço — essa é a guarda de divergência, e é ela que
+        fecha o caso. 0.3 s serve para qualquer grupo; foi medido que o tipo
+        Zigbee do dispositivo (Router ou End Device) não muda o quadro. Só
+        mexa aqui se tiver medição própria mostrando necessidade.
       default: 0.3
       selector:
         number:
