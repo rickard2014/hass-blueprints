@@ -179,11 +179,11 @@ action:
   - variables:
       alvo_agora: "{{ states(trigger.entity_id) }}"
       divergentes_agora: >-
-        {{ members | reject(eq, trigger.entity_id)
-           | reject(is_state, alvo_agora) | list }}
+        {{ members | reject('eq', trigger.entity_id)
+           | reject('is_state', alvo_agora) | list }}
   - condition: template
     value_template: >-
-      {{ alvo_agora in [on, off] and divergentes_agora | count > 0 }}
+      {{ alvo_agora in ['on', 'off'] and divergentes_agora | count > 0 }}
   - service: "homeassistant.turn_{{ alvo_agora }}"
     target:
       entity_id: "{{ divergentes_agora }}"
