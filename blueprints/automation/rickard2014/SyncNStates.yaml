@@ -75,15 +75,17 @@
 # corretamente quem discorda, e o alvo segue excluindo quem disparou. As duas
 # proteções que importam continuam de pé.
 #
-# O que falta: não existe checagem de frescor no DESENFILEIRAMENTO. Uma execução
-# que ficou na fila age com a informação do momento em que foi enfileirada —
-# limitada por settle_time, ou seja, no máximo ~0,3 s de defasagem, com max: 2.
-# É estreito, e não é o modo de falha do incidente.
+# A checagem de frescor no DESENFILEIRAMENTO existe desde 2026-08-19: o cálculo
+# de alvo e divergentes é refeito DENTRO de `action:` — templates de passos da
+# ação são renderizados quando o passo executa, não no disparo. Uma execução que
+# ficou na fila reavalia o mundo ao sair dela; se os estados já batem, morre na
+# condição da ação sem comandar nada. Antes disso a defasagem possível era o
+# settle_time (~0,3 s, com max: 2) — estreita, e não era o modo de falha do
+# incidente; a checagem fecha esse residual.
 #
-# Para essa checagem existir, o cálculo de alvo e divergentes precisa migrar
-# para DENTRO de `action:`, num passo `variables:` seguido de condição —
-# templates de passos da ação são renderizados quando o passo executa. Melhoria
-# conhecida, deliberadamente não aplicada até aqui.
+# O `variables:`/`condition:` de topo continuam existindo de propósito: cortam
+# no DISPARO o que já nasce morto, antes de ocupar a fila. A dupla avaliação é
+# intencional, não redundância a "simplificar".
 #
 # Por que queued e não single: com single, qualquer disparo dentro da janela de
 # settle_time é DESCARTADO, e isso quebra um caso real — ligar a luz sem querer
@@ -141,7 +143,8 @@ max_exceeded: silent
 
 variables:
   members: !input entities
-  # Lido ao vivo, no início desta execução — ver o cabeçalho.
+  # Avaliados no DISPARO — filtram o que entra na fila. A ação reavalia
+  # (checagem de frescor) — ver o cabeçalho.
   alvo: "{{ states(trigger.entity_id) }}"
   divergentes: >-
     {{ members | reject('eq', trigger.entity_id)
@@ -167,8 +170,22 @@ condition:
     value_template: "{{ divergentes | count > 0 }}"
 
 action:
-  - service: "homeassistant.turn_{{ alvo }}"
+  # Reavaliação no DESENFILEIRAMENTO: templates de passos da ação são
+  # renderizados quando o passo executa. `alvo`/`divergentes` de topo valem do
+  # momento do disparo; estes, do momento em que a execução sai da fila. Se o
+  # mundo já convergiu (ou o gatilho ficou indisponível na espera), a condição
+  # abaixo encerra sem comandar nada — e sem o delay, que só faz sentido depois
+  # de um comando real.
+  - variables:
+      alvo_agora: "{{ states(trigger.entity_id) }}"
+      divergentes_agora: >-
+        {{ members | reject(eq, trigger.entity_id)
+           | reject(is_state, alvo_agora) | list }}
+  - condition: template
+    value_template: >-
+      {{ alvo_agora in [on, off] and divergentes_agora | count > 0 }}
+  - service: "homeassistant.turn_{{ alvo_agora }}"
     target:
-      entity_id: "{{ divergentes }}"
+      entity_id: "{{ divergentes_agora }}"
   - delay:
       seconds: !input settle_time
