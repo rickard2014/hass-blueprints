@@ -13,6 +13,7 @@ oferecer atualização depois — é o que o `source_url` em cada arquivo permit
 | `idleshutdown.yaml` | Motion Activated Lights - Idle Shutdown Automation | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2Fidleshutdown.yaml) |
 | `occupancylights.yaml` | Motion-Activated Devices with Time and State Conditions | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2Foccupancylights.yaml) |
 | `switch_temperature_mode_controller.yaml` | RGCC - Switch Temperature Mode Controller | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2Fswitch_temperature_mode_controller.yaml) |
+| `zigbee_coordinator_poe_recovery.yaml` | Zigbee Coordinator (SLZB) - PoE Recovery | [![Add to your Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Frickard2014%2Fhass-blueprints%2Fmain%2Fblueprints%2Fautomation%2Frickard2014%2Fzigbee_coordinator_poe_recovery.yaml) |
 
 Ou: **Configurações → Automações e Cenas → Blueprints → Importar Blueprint** e
 cole a URL do arquivo `.yaml` deste repositório.
@@ -88,6 +89,23 @@ por N minutos. `idlelights` desliga após ficarem ligados por N minutos.
 
 > `idlelights` desliga **todos** os dispositivos da lista quando **qualquer um**
 > completa o tempo, não apenas o que disparou. Pode ser o que você quer, ou não.
+
+### `zigbee_coordinator_poe_recovery` — recuperar coordenador Zigbee travado
+
+Para coordenadores Zigbee de rede (ex. SLZB-06) cujo radio (NCP) trava sem
+derrubar a rede: o socket TCP continua respondendo, mas o Zigbee2MQTT nao
+consegue mais falar com o chip e fica em crash-loop
+(`SRSP - SYS - ping after Nms`). Um reboot por software do proprio device
+(API dele) nao reseta o radio nesse caso — so um power-cycle fisico resolve.
+
+Detecta o bridge do Zigbee2MQTT offline por N minutos e aciona o botao
+"power cycle" da porta PoE do switch onde o coordenador esta plugado
+(entidade nativa da integracao UniFi Network — `button.<switch>_port_<n>_power_cycle`).
+Nao repete o ciclo sozinha se a primeira tentativa nao resolver, so notifica —
+evita martelar a PoE do hardware.
+
+Em site novo com um SLZB: so selecione o `binary_sensor` do bridge e o botao
+de power-cycle da porta certa. Caso de origem: `haos-raltex`, 2026-09-15.
 
 ## Terceiros
 

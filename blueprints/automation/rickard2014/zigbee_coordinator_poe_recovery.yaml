@@ -1,0 +1,114 @@
+blueprint:
+  source_url: https://raw.githubusercontent.com/rickard2014/hass-blueprints/main/blueprints/automation/rickard2014/zigbee_coordinator_poe_recovery.yaml
+  name: Zigbee Coordinator (SLZB) - PoE Recovery
+  description: >
+    Para coordenadores Zigbee de rede (ex. SLZB-06) que travam no radio (NCP)
+    sem cair da rede: o socket TCP continua respondendo, mas o Zigbee2MQTT
+    nao consegue mais falar com o chip e fica em crash-loop
+    ("SRSP - SYS - ping after Nms"). Um reboot por software do device (API
+    dele) NAO reseta o radio nesse caso - so um power-cycle fisico resolve.
+
+    Esta blueprint detecta o bridge do Zigbee2MQTT offline por N minutos e
+    aciona o botao de "power cycle" da porta PoE do switch onde o coordenador
+    esta plugado (entidade nativa da integracao UniFi Network). Nao repete o
+    ciclo sozinha se a primeira tentativa nao resolver - so notifica, para nao
+    ficar martelando a PoE.
+
+    Em site novo com um SLZB: so selecione o binary_sensor do bridge e o
+    botao de power-cycle da porta certa. Nada de escrever automacao nova.
+  domain: automation
+  input:
+    coordinator_connection_sensor:
+      name: Sensor de conexao do coordenador
+      description: >-
+        binary_sensor que fica "off" quando o coordenador/bridge cai. Para
+        Zigbee2MQTT e o "Connection state" do bridge (normalmente
+        binary_sensor.zigbee2mqtt_bridge_connection_state).
+      selector:
+        entity:
+          domain: binary_sensor
+    offline_duration:
+      name: Tempo offline antes de agir
+      description: >-
+        Evita reagir a um blip passageiro. O coordenador so e considerado
+        travado se ficar offline por mais que isso.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          unit_of_measurement: minutes
+    recovery_button:
+      name: Botao de power-cycle da porta PoE
+      description: >-
+        Botao "Port N power cycle" (integracao UniFi Network) da porta do
+        switch onde o coordenador Zigbee esta ligado.
+      selector:
+        entity:
+          domain: button
+    wait_after_cycle:
+      name: Espera apos o power-cycle
+      description: Tempo para o device reiniciar e o bridge reconectar antes de checar o resultado.
+      default: 90
+      selector:
+        number:
+          min: 30
+          max: 300
+          unit_of_measurement: seconds
+    notify_target:
+      name: Notificar
+      description: Quem avisar do power-cycle e do resultado.
+      selector:
+        target:
+          entity:
+            domain: notify
+    location_label:
+      name: Identificacao no aviso
+      description: 'Texto curto para identificar o site/device na notificacao, ex.: "Zigbee Raltex".'
+      default: 'Coordenador Zigbee'
+      selector:
+        text: {}
+
+variables:
+  location_label: !input location_label
+  offline_duration: !input offline_duration
+
+trigger:
+  - platform: state
+    entity_id: !input coordinator_connection_sensor
+    to: 'off'
+    for:
+      minutes: !input offline_duration
+
+condition: []
+
+action:
+  - service: notify.send_message
+    target: !input notify_target
+    data:
+      message: >-
+        {{ location_label }} offline ha {{ (offline_duration | default(5)) }}min
+        - fazendo power-cycle PoE automatico.
+  - service: button.press
+    target:
+      entity_id: !input recovery_button
+  - delay:
+      seconds: !input wait_after_cycle
+  - if:
+      - condition: state
+        entity_id: !input coordinator_connection_sensor
+        state: 'off'
+    then:
+      - service: notify.send_message
+        target: !input notify_target
+        data:
+          message: >-
+            {{ location_label }}: power-cycle automatico NAO resolveu -
+            precisa de intervencao manual.
+    else:
+      - service: notify.send_message
+        target: !input notify_target
+        data:
+          message: '{{ location_label }}: recuperado automaticamente.'
+
+mode: single
