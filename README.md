@@ -82,6 +82,10 @@ desligados há pouco por inatividade.
 > arquivo lista os cinco defeitos corrigidos. O schema de inputs foi preservado,
 > então automações que já usavam a versão antiga continuam válidas.
 
+`extra_conditions` (opcional, desde 2026-10-18): condições que também precisam ser
+verdadeiras para acender — é assim que um modo da casa (Dormindo, filme) bloqueia a
+luz por movimento **sem desligar a automação**. Vazio, nada muda.
+
 ### `idleshutdown` / `idlelights` — desligar por inatividade
 
 `idleshutdown` desliga dispositivos após um sensor de movimento ficar inativo

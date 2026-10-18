@@ -18,6 +18,10 @@ blueprint:
       5. `condition:` dentro de `repeat` abortava o laço inteiro no primeiro item
          reprovado — trocado por `if/then`, que apenas pula o item.
     Schema de inputs mantido idêntico, então automações existentes continuam válidas.
+
+    2026-10-18: input opcional `extra_conditions` — condições que também precisam
+    ser verdadeiras para acender (ex.: não acender enquanto a casa está em modo
+    Dormindo). Padrão vazio = comportamento de antes; nenhuma instância precisa mudar.
   domain: automation
   input:
     motion_sensor:
@@ -50,6 +54,14 @@ blueprint:
           min: 1
           max: 60
           unit_of_measurement: minutes
+    extra_conditions:
+      name: Condições extras (opcional)
+      description: >
+        Condições adicionais que precisam ser verdadeiras para acender, por exemplo
+        "input_select.modo_casa não está em Dormindo". Vazio = sem bloqueio.
+      default: []
+      selector:
+        condition: {}
 
 trigger:
   - platform: state
@@ -77,6 +89,9 @@ variables:
        and (now() - lt).total_seconds() < (device_idle_minutes | float(5)) * 60 }}
 
 condition:
+  # `and` com lista vazia é verdadeiro: sem condições extras, nada muda.
+  - condition: and
+    conditions: !input extra_conditions
   - condition: or
     conditions:
       - condition: sun
